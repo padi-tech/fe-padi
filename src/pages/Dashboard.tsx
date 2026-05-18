@@ -1,16 +1,117 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { Routes, Route, Link, useNavigate, useLocation } from "react-router-dom";
 import ManageBlogs from "../components/admin/ManageBlogs";
 import ManageProjects from "../components/admin/ManageProjects";
+import ManageUsers from "../components/admin/ManageUsers";
+import {
+  getActivities,
+  getGlobalAnalytics,
+  getMemberAnalytics,
+  type ActivityItem,
+  type AnalyticsSummary,
+} from "../services/contentApi";
+
+type StoredUser = {
+  name?: string;
+  role?: "superadmin" | "admin" | "member";
+};
+
+const emptyAnalyticsSummary: AnalyticsSummary = {
+  totalEvents: 0,
+  byType: {
+    page_view: 0,
+    project_click: 0,
+    user_action: 0,
+  },
+  projectClicks: [],
+  timeline: [],
+};
+
+const getStoredUser = (): StoredUser | null => {
+  const rawUser = localStorage.getItem("authUser");
+
+  if (!rawUser) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(rawUser) as StoredUser;
+  } catch {
+    return null;
+  }
+};
+
+const formatRelativeTime = (input: string): string => {
+  const date = new Date(input);
+  const diffInMinutes = Math.max(1, Math.round((Date.now() - date.getTime()) / 60000));
+
+  if (diffInMinutes < 60) {
+    return `${diffInMinutes}m ago`;
+  }
+
+  const diffInHours = Math.round(diffInMinutes / 60);
+  if (diffInHours < 24) {
+    return `${diffInHours}h ago`;
+  }
+
+  return `${Math.round(diffInHours / 24)}d ago`;
+};
 
 function DashboardHome() {
+  const storedUser = getStoredUser();
+  const dashboardRole = storedUser?.role ?? "superadmin";
+  const [analytics, setAnalytics] = useState<AnalyticsSummary>(emptyAnalyticsSummary);
+  const [activities, setActivities] = useState<ActivityItem[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string>("");
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadDashboard = async () => {
+      try {
+        const [analyticsData, activitiesData] = await Promise.all([
+          dashboardRole === "member" ? getMemberAnalytics() : getGlobalAnalytics(),
+          getActivities(),
+        ]);
+
+        if (mounted) {
+          setAnalytics(analyticsData);
+          setActivities(activitiesData.slice(0, 5));
+          setError("");
+        }
+      } catch (err) {
+        if (mounted) {
+          const message = err instanceof Error ? err.message : "Failed to load dashboard data";
+          setError(message);
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    void loadDashboard();
+
+    return () => {
+      mounted = false;
+    };
+  }, [dashboardRole]);
+
+  const summary = analytics ?? emptyAnalyticsSummary;
+  const timelineMax = Math.max(1, ...summary.timeline.map((entry) => entry.count));
+  const topProjectClick = summary.projectClicks[0];
+
   return (
     <>
       {/* Page Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h2 className="font-headline-md text-headline-md text-on-surface">Dashboard Overview</h2>
-          <p className="font-body-md text-body-md text-on-surface-variant">Welcome back. Here is what's happening with your projects today.</p>
+          <p className="font-body-md text-body-md text-on-surface-variant">
+            Welcome back{storedUser?.name ? `, ${storedUser.name}` : ""}. Showing live {dashboardRole === "member" ? "member" : "global"} analytics and recent activity.
+          </p>
         </div>
         <button className="bg-primary text-on-primary px-4 py-2 rounded-lg font-label-md text-label-md flex items-center gap-2 hover:opacity-90 active:scale-95 transition-all shadow-sm">
           <span className="material-symbols-outlined text-[20px]">add</span>
@@ -20,67 +121,59 @@ function DashboardHome() {
 
       {/* Metric Cards Row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-gutter">
-        {/* Total Visitors */}
+        {/* Total Events */}
         <div className="bg-surface-container-lowest p-gutter rounded-xl shadow-sm border border-outline-variant flex flex-col gap-2">
           <div className="flex justify-between items-start">
             <div className="p-2 bg-secondary-container rounded-lg">
-              <span className="material-symbols-outlined text-primary">group</span>
+              <span className="material-symbols-outlined text-primary">insights</span>
             </div>
-            <span className="text-emerald-600 bg-emerald-50 px-2 py-1 rounded font-label-sm text-label-sm flex items-center gap-1">
-              <span className="material-symbols-outlined text-[14px]">trending_up</span> +5%
-            </span>
+            <span className="text-emerald-600 bg-emerald-50 px-2 py-1 rounded font-label-sm text-label-sm flex items-center gap-1">Live</span>
           </div>
           <div>
-            <p className="font-label-sm text-label-sm text-on-surface-variant">Total Visitors</p>
-            <h3 className="font-headline-md text-headline-md">12.5k</h3>
+            <p className="font-label-sm text-label-sm text-on-surface-variant">Total Events</p>
+            <h3 className="font-headline-md text-headline-md">{loading ? "..." : summary.totalEvents.toLocaleString()}</h3>
           </div>
         </div>
 
-        {/* Total Projects */}
+        {/* Page Views */}
         <div className="bg-surface-container-lowest p-gutter rounded-xl shadow-sm border border-outline-variant flex flex-col gap-2">
           <div className="flex justify-between items-start">
             <div className="p-2 bg-secondary-container rounded-lg">
-              <span className="material-symbols-outlined text-primary">assignment</span>
+              <span className="material-symbols-outlined text-primary">pageview</span>
             </div>
-            <span className="text-emerald-600 bg-emerald-50 px-2 py-1 rounded font-label-sm text-label-sm flex items-center gap-1">
-              <span className="material-symbols-outlined text-[14px]">trending_up</span> +12%
-            </span>
+            <span className="text-emerald-600 bg-emerald-50 px-2 py-1 rounded font-label-sm text-label-sm flex items-center gap-1">Tracked</span>
           </div>
           <div>
-            <p className="font-label-sm text-label-sm text-on-surface-variant">Total Projects</p>
-            <h3 className="font-headline-md text-headline-md">48</h3>
+            <p className="font-label-sm text-label-sm text-on-surface-variant">Page Views</p>
+            <h3 className="font-headline-md text-headline-md">{loading ? "..." : summary.byType.page_view.toLocaleString()}</h3>
           </div>
         </div>
 
-        {/* Total Blogs */}
+        {/* Project Clicks */}
         <div className="bg-surface-container-lowest p-gutter rounded-xl shadow-sm border border-outline-variant flex flex-col gap-2">
           <div className="flex justify-between items-start">
             <div className="p-2 bg-secondary-container rounded-lg">
-              <span className="material-symbols-outlined text-primary">edit_note</span>
+              <span className="material-symbols-outlined text-primary">ads_click</span>
             </div>
-            <span className="text-amber-600 bg-amber-50 px-2 py-1 rounded font-label-sm text-label-sm flex items-center gap-1">
-              <span className="material-symbols-outlined text-[14px]">horizontal_rule</span> 0%
-            </span>
+            <span className="text-amber-600 bg-amber-50 px-2 py-1 rounded font-label-sm text-label-sm flex items-center gap-1">Tracked</span>
           </div>
           <div>
-            <p className="font-label-sm text-label-sm text-on-surface-variant">Total Blogs</p>
-            <h3 className="font-headline-md text-headline-md">156</h3>
+            <p className="font-label-sm text-label-sm text-on-surface-variant">Project Clicks</p>
+            <h3 className="font-headline-md text-headline-md">{loading ? "..." : summary.byType.project_click.toLocaleString()}</h3>
           </div>
         </div>
 
-        {/* Active Users */}
+        {/* User Actions */}
         <div className="bg-surface-container-lowest p-gutter rounded-xl shadow-sm border border-outline-variant flex flex-col gap-2">
           <div className="flex justify-between items-start">
             <div className="p-2 bg-secondary-container rounded-lg">
-              <span className="material-symbols-outlined text-primary">bolt</span>
+              <span className="material-symbols-outlined text-primary">manage_accounts</span>
             </div>
-            <span className="text-emerald-600 bg-emerald-50 px-2 py-1 rounded font-label-sm text-label-sm flex items-center gap-1">
-              <span className="material-symbols-outlined text-[14px]">trending_up</span> +3.2%
-            </span>
+            <span className="text-emerald-600 bg-emerald-50 px-2 py-1 rounded font-label-sm text-label-sm flex items-center gap-1">Tracked</span>
           </div>
           <div>
-            <p className="font-label-sm text-label-sm text-on-surface-variant">Active Users</p>
-            <h3 className="font-headline-md text-headline-md">1.2k</h3>
+            <p className="font-label-sm text-label-sm text-on-surface-variant">User Actions</p>
+            <h3 className="font-headline-md text-headline-md">{loading ? "..." : summary.byType.user_action.toLocaleString()}</h3>
           </div>
         </div>
       </div>
@@ -92,31 +185,41 @@ function DashboardHome() {
           <div className="p-gutter border-b border-outline-variant flex items-center justify-between">
             <div>
               <h4 className="font-headline-sm text-headline-sm">Visitor Analytics</h4>
-              <p className="font-label-sm text-label-sm text-on-surface-variant">Daily unique visitors over the last 14 days</p>
+              <p className="font-label-sm text-label-sm text-on-surface-variant">Daily activity volume over the last available dates</p>
             </div>
             <div className="flex gap-2">
               <button className="p-2 hover:bg-surface-container text-outline rounded"><span className="material-symbols-outlined text-[20px]">more_vert</span></button>
             </div>
           </div>
           <div className="p-gutter flex-1 flex flex-col justify-end min-h-[350px]">
-            <div className="flex items-end justify-between h-64 gap-2 px-4">
-              {/* Stylized Bar Chart using Tailwind */}
-              <div className="flex-1 bg-primary/10 hover:bg-primary/30 transition-colors rounded-t-lg relative group h-[40%]"><div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-inverse-surface text-inverse-on-surface text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">420</div></div>
-              <div className="flex-1 bg-primary/20 hover:bg-primary/40 transition-colors rounded-t-lg relative group h-[60%]"><div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-inverse-surface text-inverse-on-surface text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">680</div></div>
-              <div className="flex-1 bg-primary/10 hover:bg-primary/30 transition-colors rounded-t-lg relative group h-[30%]"><div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-inverse-surface text-inverse-on-surface text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">310</div></div>
-              <div className="flex-1 bg-primary/40 hover:bg-primary/60 transition-colors rounded-t-lg relative group h-[85%]"><div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-inverse-surface text-inverse-on-surface text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">940</div></div>
-              <div className="flex-1 bg-primary/20 hover:bg-primary/40 transition-colors rounded-t-lg relative group h-[50%]"><div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-inverse-surface text-inverse-on-surface text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">550</div></div>
-              <div className="flex-1 bg-primary/60 hover:bg-primary/80 transition-colors rounded-t-lg relative group h-[95%]"><div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-inverse-surface text-inverse-on-surface text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">1.1k</div></div>
-              <div className="flex-1 bg-primary/30 hover:bg-primary/50 transition-colors rounded-t-lg relative group h-[70%]"><div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-inverse-surface text-inverse-on-surface text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">790</div></div>
-              <div className="flex-1 bg-primary/10 hover:bg-primary/30 transition-colors rounded-t-lg relative group h-[45%]"><div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-inverse-surface text-inverse-on-surface text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">480</div></div>
-              <div className="flex-1 bg-primary/20 hover:bg-primary/40 transition-colors rounded-t-lg relative group h-[65%]"><div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-inverse-surface text-inverse-on-surface text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">710</div></div>
-              <div className="flex-1 bg-primary/80 hover:bg-primary transition-colors rounded-t-lg relative group h-[100%]"><div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-inverse-surface text-inverse-on-surface text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">1.2k</div></div>
-              <div className="flex-1 bg-primary/40 hover:bg-primary/60 transition-colors rounded-t-lg relative group h-[75%]"><div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-inverse-surface text-inverse-on-surface text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">860</div></div>
-              <div className="flex-1 bg-primary/20 hover:bg-primary/40 transition-colors rounded-t-lg relative group h-[55%]"><div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-inverse-surface text-inverse-on-surface text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">600</div></div>
-            </div>
-            <div className="flex justify-between mt-4 text-on-surface-variant font-label-sm text-[10px] uppercase tracking-widest px-4">
-              <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span><span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span>
-            </div>
+            {summary.timeline.length === 0 ? (
+              <div className="flex-1 flex items-center justify-center text-on-surface-variant">
+                {loading ? "Loading chart..." : "No analytics available yet."}
+              </div>
+            ) : (
+              <>
+                <div className="flex items-end justify-between h-64 gap-2 px-4">
+                  {summary.timeline.map((entry) => {
+                    const barHeight = Math.max(16, Math.round((entry.count / timelineMax) * 100));
+
+                    return (
+                      <div key={entry.date} className="flex-1 bg-primary/10 hover:bg-primary/30 transition-colors rounded-t-lg relative group" style={{ height: `${barHeight}%` }}>
+                        <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-inverse-surface text-inverse-on-surface text-[10px] py-1 px-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">
+                          {entry.count}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="flex justify-between mt-4 text-on-surface-variant font-label-sm text-[10px] uppercase tracking-widest px-4 gap-2">
+                  {summary.timeline.map((entry) => (
+                    <span key={entry.date} className="flex-1 text-center truncate">
+                      {entry.date.slice(5)}
+                    </span>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -124,14 +227,16 @@ function DashboardHome() {
         <div className="lg:col-span-4 flex flex-col gap-gutter">
           <div className="bg-primary text-on-primary p-gutter rounded-xl shadow-lg relative overflow-hidden flex-1">
             <div className="relative z-10">
-              <h4 className="font-headline-sm text-headline-sm mb-2">Growth Target</h4>
-              <p className="font-body-md text-body-md opacity-80 mb-6">You've reached 85% of your monthly goal for new blog posts. Almost there!</p>
+              <h4 className="font-headline-sm text-headline-sm mb-2">Top Project Clicks</h4>
+              <p className="font-body-md text-body-md opacity-80 mb-6">
+                {topProjectClick ? `${topProjectClick.referenceId} has ${topProjectClick.count} recorded clicks.` : "No project clicks recorded yet."}
+              </p>
               <div className="w-full bg-primary-container/30 h-3 rounded-full mb-2">
-                <div className="bg-white h-3 rounded-full" style={{ width: '85%' }}></div>
+                <div className="bg-white h-3 rounded-full" style={{ width: `${Math.min(100, summary.byType.project_click * 10)}%` }}></div>
               </div>
               <div className="flex justify-between font-label-sm text-label-sm">
-                <span>132 / 156 Blogs</span>
-                <span>85%</span>
+                <span>{summary.byType.project_click} clicks</span>
+                <span>{dashboardRole}</span>
               </div>
             </div>
             <div className="absolute -right-8 -bottom-8 opacity-20 transform rotate-12">
@@ -139,14 +244,16 @@ function DashboardHome() {
             </div>
           </div>
           <div className="bg-surface-container-highest p-gutter rounded-xl border border-outline-variant flex flex-col gap-4">
-            <h4 className="font-label-md text-label-md text-on-surface uppercase tracking-wider">Top Performing Blog</h4>
+            <h4 className="font-label-md text-label-md text-on-surface uppercase tracking-wider">Dashboard Scope</h4>
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 rounded-lg bg-surface-container-lowest flex items-center justify-center border border-outline-variant">
-                <span className="material-symbols-outlined text-primary">article</span>
+                <span className="material-symbols-outlined text-primary">verified_user</span>
               </div>
               <div>
-                <p className="font-label-md text-label-md text-on-surface">The Future of AI in Fintech</p>
-                <p className="font-label-sm text-label-sm text-on-surface-variant">4.2k views this week</p>
+                <p className="font-label-md text-label-md text-on-surface">{dashboardRole === "member" ? "Member analytics" : "Global analytics"}</p>
+                <p className="font-label-sm text-label-sm text-on-surface-variant">
+                  {dashboardRole === "member" ? "Limited to your own projects" : "Includes the full workspace"}
+                </p>
               </div>
             </div>
           </div>
@@ -157,7 +264,7 @@ function DashboardHome() {
       <div className="bg-surface-container-lowest rounded-xl shadow-sm border border-outline-variant overflow-hidden">
         <div className="p-gutter border-b border-outline-variant flex items-center justify-between">
           <h4 className="font-headline-sm text-headline-sm">Recent Activities</h4>
-          <button className="text-primary font-label-md text-label-md hover:underline">View All Activities</button>
+          <button className="text-primary font-label-md text-label-md hover:underline">Live feed</button>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left">
@@ -171,75 +278,46 @@ function DashboardHome() {
               </tr>
             </thead>
             <tbody className="divide-y divide-outline-variant">
-              <tr className="hover:bg-surface-bright transition-colors">
-                <td className="px-gutter py-4">
-                  <div className="flex items-center gap-3">
-                    <img className="w-8 h-8 rounded-full object-cover" alt="User" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBjt7jMdVORGeQhfXKUq-vBE0hMWCljZRBX3EH8Juu_HSinRMPnmITjYuBUpXq22qV25WVOXkuzR-mH_VnQ4DrPaUSKVTgjCOOB364jWrfANQsYBmVUq5yQhcyZqvzz0o12Wtd5Ht5c8qj9ImoZpX9c9uVqBPM29qT4ll95Z46sz9PE7nCd6WsWBcRfRfUSLrjLdTEAd1A0kxGLbbYNPKgekcoNtL4EX2tJqDDHI7f-eaKOiVszIubrSWI1AQNpavgSt0ORkUFmVv8"/>
-                    <span className="font-body-md text-body-md font-medium">Jane Doe</span>
-                  </div>
-                </td>
-                <td className="px-gutter py-4">
-                  <span className="bg-emerald-50 text-emerald-700 px-3 py-1 rounded-full font-label-sm text-label-sm border border-emerald-100">Created</span>
-                </td>
-                <td className="px-gutter py-4">
-                  <span className="font-body-md text-body-md text-on-surface">Project Phoenix</span>
-                </td>
-                <td className="px-gutter py-4">
-                  <span className="font-label-sm text-label-sm text-on-surface-variant">2 hours ago</span>
-                </td>
-                <td className="px-gutter py-4 text-right">
-                  <button className="p-2 hover:bg-surface-container rounded-full text-on-surface-variant">
-                    <span className="material-symbols-outlined text-[20px]">visibility</span>
-                  </button>
-                </td>
-              </tr>
-              <tr className="hover:bg-surface-bright transition-colors">
-                <td className="px-gutter py-4">
-                  <div className="flex items-center gap-3">
-                    <img className="w-8 h-8 rounded-full object-cover" alt="User" src="https://lh3.googleusercontent.com/aida-public/AB6AXuC2UeWik7RHIwcf5ac4T4RglbLOA-FU22biMm0eE6J-eH-ixUuqqyvUL2lqHTK8ZtV28gb2YodJzju6tqjWVlfqFGIT0dQLurr2pXEfWuFtbDF1NjrqyEpBsTlH405W3p5B6K6A5PyaSSNcAXCTgJYsS2Amv8rnWzcEULu4TToUIQX6W8zQ2JeQz2qaQvPrpGloM2VG7jbvTkzsm4DZXP473ShKGGH2P3AtZqxNklEpUtVWIdYTTEUxOn7lj6cBPPhH57SiV873Ens"/>
-                    <span className="font-body-md text-body-md font-medium">John Smith</span>
-                  </div>
-                </td>
-                <td className="px-gutter py-4">
-                  <span className="bg-amber-50 text-amber-700 px-3 py-1 rounded-full font-label-sm text-label-sm border border-amber-100">Edited</span>
-                </td>
-                <td className="px-gutter py-4">
-                  <span className="font-body-md text-body-md text-on-surface">Blog: AI Trends</span>
-                </td>
-                <td className="px-gutter py-4">
-                  <span className="font-label-sm text-label-sm text-on-surface-variant">5 hours ago</span>
-                </td>
-                <td className="px-gutter py-4 text-right">
-                  <button className="p-2 hover:bg-surface-container rounded-full text-on-surface-variant">
-                    <span className="material-symbols-outlined text-[20px]">visibility</span>
-                  </button>
-                </td>
-              </tr>
-              <tr className="hover:bg-surface-bright transition-colors">
-                <td className="px-gutter py-4">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary text-[12px]">RW</div>
-                    <span className="font-body-md text-body-md font-medium">Robert White</span>
-                  </div>
-                </td>
-                <td className="px-gutter py-4">
-                  <span className="bg-rose-50 text-rose-700 px-3 py-1 rounded-full font-label-sm text-label-sm border border-rose-100">Deleted</span>
-                </td>
-                <td className="px-gutter py-4">
-                  <span className="font-body-md text-body-md text-on-surface">Old Archive 2023</span>
-                </td>
-                <td className="px-gutter py-4">
-                  <span className="font-label-sm text-label-sm text-on-surface-variant">1 day ago</span>
-                </td>
-                <td className="px-gutter py-4 text-right">
-                  <button className="p-2 hover:bg-surface-container rounded-full text-on-surface-variant">
-                    <span className="material-symbols-outlined text-[20px]">visibility</span>
-                  </button>
-                </td>
-              </tr>
+              {activities.length === 0 ? (
+                <tr>
+                  <td className="px-gutter py-4 text-on-surface-variant" colSpan={5}>
+                    {loading ? "Loading activities..." : "No recent activity yet."}
+                  </td>
+                </tr>
+              ) : (
+                activities.map((activity) => (
+                  <tr key={activity.id} className="hover:bg-surface-bright transition-colors">
+                    <td className="px-gutter py-4">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center font-bold text-primary text-[12px]">
+                          {activity.user?.name?.slice(0, 2).toUpperCase() ?? "SY"}
+                        </div>
+                        <span className="font-body-md text-body-md font-medium">{activity.user?.name ?? "System"}</span>
+                      </div>
+                    </td>
+                    <td className="px-gutter py-4">
+                      <span className="bg-amber-50 text-amber-700 px-3 py-1 rounded-full font-label-sm text-label-sm border border-amber-100">
+                        {activity.type.replace("_", " ")}
+                      </span>
+                    </td>
+                    <td className="px-gutter py-4">
+                      <span className="font-body-md text-body-md text-on-surface">{activity.actionDetail}</span>
+                    </td>
+                    <td className="px-gutter py-4">
+                      <span className="font-label-sm text-label-sm text-on-surface-variant">{formatRelativeTime(activity.createdAt)}</span>
+                    </td>
+                    <td className="px-gutter py-4 text-right">
+                      <button className="p-2 hover:bg-surface-container rounded-full text-on-surface-variant">
+                        <span className="material-symbols-outlined text-[20px]">visibility</span>
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
+        {error && <div className="px-gutter py-4 text-sm text-red-600 border-t border-outline-variant">{error}</div>}
       </div>
     </>
   );
@@ -250,6 +328,8 @@ export default function Dashboard() {
   const location = useLocation();
 
   const handleLogout = () => {
+    localStorage.removeItem("authToken");
+    localStorage.removeItem("authUser");
     localStorage.removeItem("isAuthenticated");
     navigate("/");
   };
@@ -298,6 +378,17 @@ export default function Dashboard() {
             <span className="material-symbols-outlined">edit_note</span>
             Manage Blogs
           </Link>
+          <Link
+            to="/dashboard/users"
+            className={`flex items-center px-4 py-3 gap-3 font-label-md text-label-md transition-all cursor-pointer active:scale-[0.98] ${
+              currentPath === "/dashboard/users"
+                ? "bg-secondary-container text-primary border-l-4 border-primary"
+                : "text-secondary hover:bg-surface-container"
+            }`}
+          >
+            <span className="material-symbols-outlined">group</span>
+            Manage Users
+          </Link>
           <button
             onClick={handleLogout}
             className="text-error hover:bg-error-container mt-auto flex items-center px-4 py-3 gap-3 font-label-md text-label-md transition-colors duration-200 cursor-pointer active:scale-[0.98] text-left"
@@ -330,8 +421,8 @@ export default function Dashboard() {
           </button>
           <div className="flex items-center gap-3 pl-2 ml-2 border-l border-outline-variant">
             <div className="text-right hidden sm:block">
-              <p className="font-label-md text-label-md text-on-surface">Superadmin</p>
-              <p className="font-label-sm text-label-sm text-on-surface-variant">System Master</p>
+              <p className="font-label-md text-label-md text-on-surface">{getStoredUser()?.name ?? "Superadmin"}</p>
+              <p className="font-label-sm text-label-sm text-on-surface-variant">{getStoredUser()?.role ?? "System Master"}</p>
             </div>
             <img
               alt="Superadmin Avatar"
@@ -349,6 +440,7 @@ export default function Dashboard() {
             <Route path="/" element={<DashboardHome />} />
             <Route path="projects" element={<ManageProjects />} />
             <Route path="blogs" element={<ManageBlogs />} />
+            <Route path="users" element={<ManageUsers />} />
           </Routes>
         </div>
       </main>
