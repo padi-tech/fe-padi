@@ -6,7 +6,8 @@ import Dashboard from "./pages/Dashboard";
 import Login from "./components/auth/Login";
 
 const ProtectedRoute = ({ children }: { children: JSX.Element }) => {
-  const isAuthenticated = localStorage.getItem("isAuthenticated") === "true";
+  const token = localStorage.getItem("authToken");
+  const isAuthenticated = !!token;
   if (!isAuthenticated) {
     return <Navigate to="/secret-login" />;
   }
