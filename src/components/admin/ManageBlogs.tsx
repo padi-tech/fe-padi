@@ -16,6 +16,23 @@ type FormState = {
   thumbnail: string;
 };
 
+type UserRole = "superadmin" | "admin" | "member";
+
+const getCurrentRole = (): UserRole | null => {
+  const rawUser = localStorage.getItem("authUser");
+
+  if (!rawUser) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(rawUser) as { role?: UserRole };
+    return parsed.role ?? null;
+  } catch {
+    return null;
+  }
+};
+
 const initialFormState: FormState = {
   title: "",
   content: "",
@@ -23,6 +40,8 @@ const initialFormState: FormState = {
 };
 
 export default function ManageBlogs() {
+  const currentRole = getCurrentRole();
+  const canManageBlogs = currentRole === "superadmin" || currentRole === "admin";
   const [blogs, setBlogs] = useState<BlogItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
@@ -91,6 +110,11 @@ export default function ManageBlogs() {
   };
 
   const openCreateModal = () => {
+    if (!canManageBlogs) {
+      setError("Only admin or superadmin can create blogs.");
+      return;
+    }
+
     setFormData(initialFormState);
     setFormErrors({});
     setFormError("");
@@ -98,6 +122,11 @@ export default function ManageBlogs() {
   };
 
   const openEditModal = (blog: BlogItem) => {
+    if (!canManageBlogs) {
+      setError("Only admin or superadmin can update blogs.");
+      return;
+    }
+
     setSelectedBlogId(blog.id);
     setFormData({
       title: blog.title,
@@ -151,6 +180,11 @@ export default function ManageBlogs() {
   };
 
   const handleDeleteClick = (blogId: string) => {
+    if (!canManageBlogs) {
+      setError("Only admin or superadmin can delete blogs.");
+      return;
+    }
+
     setSelectedBlogId(blogId);
     setShowDeleteModal(true);
   };
@@ -183,11 +217,18 @@ export default function ManageBlogs() {
         <h1 className="text-3xl font-bold text-gray-800">Manage Blogs</h1>
         <button
           onClick={openCreateModal}
+          disabled={!canManageBlogs}
           className="bg-purple-600 hover:bg-purple-700 text-white px-6 py-2.5 rounded-xl font-semibold transition-colors shadow-sm"
         >
           + Create New Blog
         </button>
       </div>
+
+      {!canManageBlogs && (
+        <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-700 rounded-lg text-sm">
+          You can view blogs, but only admin/superadmin can create, edit, or delete.
+        </div>
+      )}
 
       <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
         <div className="grid grid-cols-12 gap-4 p-4 border-b border-gray-100 bg-gray-50 text-sm font-semibold text-gray-600">
@@ -209,13 +250,14 @@ export default function ManageBlogs() {
               <div className="col-span-3 flex justify-end gap-2">
                 <button
                   onClick={() => openEditModal(blog)}
+                  disabled={!canManageBlogs}
                   className="px-4 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg text-sm font-medium transition-colors"
                 >
                   Edit
                 </button>
                 <button
                   onClick={() => handleDeleteClick(blog.id)}
-                  disabled={actionLoading === blog.id}
+                  disabled={!canManageBlogs || actionLoading === blog.id}
                   className="px-4 py-2 border border-red-200 hover:bg-red-50 text-red-600 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {actionLoading === blog.id ? "Deleting..." : "Delete"}
