@@ -1,19 +1,22 @@
 import React, { useEffect, useState } from "react";
-import { Routes, Route, Link, useNavigate, useLocation } from "react-router-dom";
+import { Routes, Route, Link, useNavigate, useLocation, Navigate } from "react-router-dom";
 import ManageBlogs from "../components/admin/ManageBlogs";
 import ManageProjects from "../components/admin/ManageProjects";
 import ManageUsers from "../components/admin/ManageUsers";
 import {
   getActivities,
+  getMe,
   getGlobalAnalytics,
   getMemberAnalytics,
   type ActivityItem,
   type AnalyticsSummary,
 } from "../services/contentApi";
 
+type UserRole = "superadmin" | "admin" | "member";
+
 type StoredUser = {
   name?: string;
-  role?: "superadmin" | "admin" | "member";
+  role?: UserRole;
 };
 
 const emptyAnalyticsSummary: AnalyticsSummary = {
@@ -59,7 +62,8 @@ const formatRelativeTime = (input: string): string => {
 
 function DashboardHome() {
   const storedUser = getStoredUser();
-  const dashboardRole = storedUser?.role ?? "superadmin";
+  const [dashboardRole, setDashboardRole] = useState<UserRole | null>(storedUser?.role ?? null);
+  const [displayName, setDisplayName] = useState<string>(storedUser?.name ?? "");
   const [analytics, setAnalytics] = useState<AnalyticsSummary>(emptyAnalyticsSummary);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -70,8 +74,30 @@ function DashboardHome() {
 
     const loadDashboard = async () => {
       try {
+        let role = dashboardRole;
+
+        if (!role) {
+          const me = await getMe();
+          role = me.role;
+
+          if (mounted) {
+            setDashboardRole(me.role);
+            setDisplayName(me.name);
+
+            const existing = getStoredUser() ?? {};
+            localStorage.setItem(
+              "authUser",
+              JSON.stringify({
+                ...existing,
+                name: me.name,
+                role: me.role,
+              }),
+            );
+          }
+        }
+
         const [analyticsData, activitiesData] = await Promise.all([
-          dashboardRole === "member" ? getMemberAnalytics() : getGlobalAnalytics(),
+          role === "member" ? getMemberAnalytics() : getGlobalAnalytics(),
           getActivities(),
         ]);
 
@@ -110,7 +136,7 @@ function DashboardHome() {
         <div>
           <h2 className="font-headline-md text-headline-md text-on-surface">Dashboard Overview</h2>
           <p className="font-body-md text-body-md text-on-surface-variant">
-            Welcome back{storedUser?.name ? `, ${storedUser.name}` : ""}. Showing live {dashboardRole === "member" ? "member" : "global"} analytics and recent activity.
+            Welcome back{displayName ? `, ${displayName}` : ""}. Showing live {dashboardRole === "member" ? "member" : "global"} analytics and recent activity.
           </p>
         </div>
         <button className="bg-primary text-on-primary px-4 py-2 rounded-lg font-label-md text-label-md flex items-center gap-2 hover:opacity-90 active:scale-95 transition-all shadow-sm">
@@ -236,7 +262,7 @@ function DashboardHome() {
               </div>
               <div className="flex justify-between font-label-sm text-label-sm">
                 <span>{summary.byType.project_click} clicks</span>
-                <span>{dashboardRole}</span>
+                <span>{dashboardRole ?? "member"}</span>
               </div>
             </div>
             <div className="absolute -right-8 -bottom-8 opacity-20 transform rotate-12">
@@ -323,9 +349,20 @@ function DashboardHome() {
   );
 }
 
+function AccessDenied({ message }: { message: string }) {
+  return (
+    <div className="rounded-xl border border-red-200 bg-red-50 p-6 text-red-700">
+      <h3 className="font-semibold mb-1">Access denied</h3>
+      <p className="text-sm">{message}</p>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const navigate = useNavigate();
   const location = useLocation();
+  const storedUser = getStoredUser();
+  const currentRole = storedUser?.role;
 
   const handleLogout = () => {
     localStorage.removeItem("authToken");
@@ -385,6 +422,7 @@ export default function Dashboard() {
                 ? "bg-secondary-container text-primary border-l-4 border-primary"
                 : "text-secondary hover:bg-surface-container"
             }`}
+            style={{ display: currentRole === "superadmin" ? "flex" : "none" }}
           >
             <span className="material-symbols-outlined">group</span>
             Manage Users
@@ -421,8 +459,8 @@ export default function Dashboard() {
           </button>
           <div className="flex items-center gap-3 pl-2 ml-2 border-l border-outline-variant">
             <div className="text-right hidden sm:block">
-              <p className="font-label-md text-label-md text-on-surface">{getStoredUser()?.name ?? "Superadmin"}</p>
-              <p className="font-label-sm text-label-sm text-on-surface-variant">{getStoredUser()?.role ?? "System Master"}</p>
+              <p className="font-label-md text-label-md text-on-surface">{storedUser?.name ?? "Superadmin"}</p>
+              <p className="font-label-sm text-label-sm text-on-surface-variant">{storedUser?.role ?? "System Master"}</p>
             </div>
             <img
               alt="Superadmin Avatar"
@@ -440,7 +478,17 @@ export default function Dashboard() {
             <Route path="/" element={<DashboardHome />} />
             <Route path="projects" element={<ManageProjects />} />
             <Route path="blogs" element={<ManageBlogs />} />
-            <Route path="users" element={<ManageUsers />} />
+            <Route
+              path="users"
+              element={
+                currentRole === "superadmin" ? (
+                  <ManageUsers />
+                ) : (
+                  <AccessDenied message="Only superadmin can access user management." />
+                )
+              }
+            />
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
           </Routes>
         </div>
       </main>
