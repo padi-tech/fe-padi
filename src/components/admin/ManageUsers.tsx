@@ -7,6 +7,23 @@ import {
   type UserItem,
 } from "../../services/contentApi";
 
+type UserRole = "superadmin" | "admin" | "member";
+
+const getCurrentRole = (): UserRole | null => {
+  const rawUser = localStorage.getItem("authUser");
+
+  if (!rawUser) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(rawUser) as { role?: UserRole };
+    return parsed.role ?? null;
+  } catch {
+    return null;
+  }
+};
+
 const extractErrorMessage = (error: unknown): string => {
   if (axios.isAxiosError(error)) {
     return (error.response?.data as { message?: string } | undefined)?.message ?? "Failed to fetch users";
@@ -16,6 +33,8 @@ const extractErrorMessage = (error: unknown): string => {
 };
 
 export default function ManageUsers() {
+  const currentRole = getCurrentRole();
+  const canManageUsers = currentRole === "superadmin";
   const [users, setUsers] = useState<UserItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string>("");
@@ -23,6 +42,12 @@ export default function ManageUsers() {
   const [actionError, setActionError] = useState<string>("");
 
   useEffect(() => {
+    if (!canManageUsers) {
+      setLoading(false);
+      setError("Only superadmin can access user management.");
+      return;
+    }
+
     let mounted = true;
 
     const loadUsers = async () => {
@@ -49,7 +74,7 @@ export default function ManageUsers() {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [canManageUsers]);
 
   const handleDeleteUser = async (userId: string) => {
     if (!confirm("Are you sure you want to delete this user?")) return;
